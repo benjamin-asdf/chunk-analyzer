@@ -1,6 +1,13 @@
+# Concept
+
+Say what chunks of a code base are required to update, given a refactor request in natural language. 
+    
+https://gist.github.com/VictorTaelin/23862a856250036f44fb8c5900fb796e
 
 
 # Run
+
+- pull this repository
 
 ## 1. Anthropic api key
 
