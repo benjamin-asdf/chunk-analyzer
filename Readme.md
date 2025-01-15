@@ -47,12 +47,19 @@ bb -x bennischwerdtner.refactor.analyser/say-relevant-refactor-chunks --request 
 
 - `bb build`, which see
 
+# Time
 
+Seems to be 5-10s.
 
+# Cost
 
+- It makes a single claude sonet api call per code refactor request
 
+- input prompt is ca 7200 tokens.
+- output is max 1024 but probably way less so let's say 400
 
+- Claude 3.5 Sonnet 2024-10-22
+- Million Input Tokens 3 USD
+- Million Output tokens 15 USD
 
-
-
-
+Comes to something in the range of 0.02-0.03 USD per code refactor request.

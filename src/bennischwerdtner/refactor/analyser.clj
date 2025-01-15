@@ -121,20 +121,6 @@
                              relevant-chunks}))))
 
 
-
-(comment
-  (chat-request! [{:content "I am a computer" :role "assistant"}])
-  (chat-request!
-   [{:content
-     (slurp
-      "/home/benj/repos/classify-blocks/resources/hvm3-chunked-codebase-snapshot-29-12-2024.txt")
-     :role "user"}
-    {:content
-     "Summarize this code base suitable for consumption by refactor tools. Summarize type and function names consicely."
-     :role "user"}])
-  (def resp *1)
-  (spit "resources/prompt/summary" (-> (read-resp resp) :content peek :text)))
-
 (comment
 
   ;; --------
@@ -166,4 +152,14 @@
                            :text)
                      chunks)))
 
-  [15 34 83 88 112 117 123 134 154 184 190 203 215 220 254 255 256 263 284 285 286 287 288 289 295 300 310 344 353 358 364 369 374 394 395 396 397 398 404 414 433 455 480 487 491 493 505])
+  [15 34 83 88 112 117 123 134 154 184 190 203 215 220 254 255 256 263 284 285 286 287 288 289 295 300 310 344 353 358 364 369 374 394 395 396 397 398 404 414 433 455 480 487 491 493 505]
+
+
+
+
+
+
+
+
+
+  )
