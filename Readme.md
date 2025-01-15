@@ -55,6 +55,8 @@ Seems to be 5-10s.
 
 tldr: 0.02-0.03 USD per code refactor request
 
+[Sheet](https://docs.google.com/spreadsheets/d/1iPO13RGSBKsKMUevKV7W2tytxssj5YvMlqcX31M8nFs/edit?usp=sharing)
+
 
 - It makes a single claude sonet api call per code refactor request
 
