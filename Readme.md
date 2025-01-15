@@ -13,8 +13,7 @@
 # Concept
 
 Say what chunks of a code base are required to update, given a refactor request in natural language. 
-    
-https://gist.github.com/VictorTaelin/23862a856250036f44fb8c5900fb796e
+See [bounty](https://gist.github.com/VictorTaelin/23862a856250036f44fb8c5900fb796e)
 
 
 # Run
@@ -41,6 +40,14 @@ java -jar dist/chunk-analyser-0.0.1-standalone.jar "Fix todos"
 ```
 bb -x bennischwerdtner.refactor.analyser/say-relevant-refactor-chunks --request "Fix todos"
 ```
+
+# Concepts
+
+This uses Anthropic public api, asking model to output regex patterns. 
+
+They are then used to filter the chunks. 
+
+The initial prompt is made from some summary and a portion of the input code base as example.
 
 
 # Build
