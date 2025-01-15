@@ -4,6 +4,4 @@
 
  :tasks
  {build
-  (shell "clj -T:build uber")
-  }
- }
+  (shell "clj -T:build uber")}}
