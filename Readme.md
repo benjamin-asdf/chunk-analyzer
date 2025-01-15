@@ -43,11 +43,11 @@ bb -x bennischwerdtner.refactor.analyser/say-relevant-refactor-chunks --request 
 
 # Concepts
 
-This uses Anthropic public api, asking model to output regex patterns. 
+- This uses *Anthropic public api*, asking a *model8 to output *regex patterns*.
 
-They are then used to filter the chunks. 
+- The *regex patterns* are extracted and used to *filter* the input *source code chunks*. (by the program)
 
-The initial prompt is made from some summary and a portion of the input code base as example.
+- The *initial prompt* is made from pre-generated / prompt engineered text that summarizes the task and code base.
 
 
 # Build
