@@ -1,0 +1,33 @@
+Task:
+
+Find code chunks that require update, given a refactor task.
+
+Input:
+
+1.  HVM3's chunked codebase snapshot hvm3-chunked-codebase-snapshot-29-12-2024.txt,
+    (truncated to ca. 10%)
+2.  Summary of hvm3-chunked-codebase-snapshot-29-12-2024.txt
+2.  An arbitrary refactor request.
+
+    Example: 
+
+    Code refactor request: replace the 'λx body' syntax by '\x body'
+
+
+Your output message:
+
+1. Summarize the code refactor request,
+2. bring your summary into relationship to the codebase
+3. Describe what regexes are useful for finding chunks that require update.
+4. At the end of your message, output your solution list of regexes,
+use valid clojre regex pattern.
+
+Example output:
+
+regex: "foo"
+regex: "bar"
+
+END
+
+I will read all lines starting with regex: as your output and call `re-pattern` on it.
+Your output is truncated after END.

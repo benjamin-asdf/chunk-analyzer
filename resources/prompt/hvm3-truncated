@@ -1,0 +1,511 @@
+./Collapse.hs
+#0:
+module HVML.Collapse where
+#1:
+import Control.Monad (ap, forM, forM_)
+import Control.Monad.IO.Class
+import Data.Char (chr, ord)
+import Data.IORef
+import Data.Word
+import GHC.Conc
+import HVML.Show
+import HVML.Type
+import System.Exit (exitFailure)
+import System.IO.Unsafe (unsafeInterleaveIO)
+import qualified Data.IntMap.Strict as IM
+import qualified Data.Map.Strict as MS
+import Debug.Trace
+#2:
+-- The Collapse Monad
+-- ------------------
+-- See: https://gist.github.com/VictorTaelin/60d3bc72fb4edefecd42095e44138b41
+#3:
+-- A bit-string
+data Bin
+  = O Bin
+  | I Bin
+  | E
+  deriving Show
+#4:
+-- A Collapse is a tree of superposed values
+data Collapse a = CSup Word64 (Collapse a) (Collapse a) | CVal a | CEra
+  deriving Show
+#5:
+bind :: Collapse a -> (a -> Collapse b) -> Collapse b
+bind k f = fork k IM.empty where
+  -- fork :: Collapse a -> IntMap (Bin -> Bin) -> Collapse b
+  fork CEra         paths = CEra
+  fork (CVal v)     paths = pass (f v) (IM.map (\x -> x E) paths)
+  fork (CSup k x y) paths =
+    let lft = fork x $ IM.alter (\x -> Just (maybe (putO id) putO x)) (fromIntegral k) paths in
+    let rgt = fork y $ IM.alter (\x -> Just (maybe (putI id) putI x)) (fromIntegral k) paths in
+    CSup k lft rgt 
+  -- pass :: Collapse b -> IntMap Bin -> Collapse b
+  pass CEra         paths = CEra
+  pass (CVal v)     paths = CVal v
+  pass (CSup k x y) paths = case IM.lookup (fromIntegral k) paths of
+    Just (O p) -> pass x (IM.insert (fromIntegral k) p paths)
+    Just (I p) -> pass y (IM.insert (fromIntegral k) p paths)
+    Just E     -> CSup k x y
+    Nothing    -> CSup k x y
+  -- putO :: (Bin -> Bin) -> (Bin -> Bin)
+  putO bs = \x -> bs (O x)
+  -- putI :: (Bin -> Bin) -> (Bin -> Bin) 
+  putI bs = \x -> bs (I x)
+#6:
+-- Mutates an element at given index in a list
+mut :: Word64 -> (a -> a) -> [a] -> [a]
+mut 0 f (x:xs) = f x : xs
+mut n f (x:xs) = x : mut (n-1) f xs
+mut _ _ []     = []
+#7:
+instance Functor Collapse where
+  fmap f (CVal v)     = CVal (f v)
+  fmap f (CSup k x y) = CSup k (fmap f x) (fmap f y)
+  fmap _ CEra         = CEra
+#8:
+instance Applicative Collapse where
+  pure  = CVal
+  (<*>) = ap
+#9:
+instance Monad Collapse where
+  return = pure
+  (>>=)  = bind
+#10:
+-- Dup Collapser
+-- -------------
+#11:
+collapseDupsAt :: IM.IntMap [Int] -> ReduceAt -> Book -> Loc -> HVM Core
+#12:
+collapseDupsAt state@(paths) reduceAt book host = unsafeInterleaveIO $ do
+  term <- reduceAt book host
+  case tagT (termTag term) of
+#13:
+    ERA -> do
+      return Era
+#14:
+    LET -> do
+      let loc = termLoc term
+      let mode = modeT (termLab term)
+      name <- return $ "$" ++ show (loc + 0)
+      val0 <- collapseDupsAt state reduceAt book (loc + 1)
+      bod0 <- collapseDupsAt state reduceAt book (loc + 2)
+      return $ Let mode name val0 bod0
+#15:
+    LAM -> do
+      let loc = termLoc term
+      name <- return $ "$" ++ show (loc + 0)
+      bod0 <- collapseDupsAt state reduceAt book (loc + 0)
+      return $ Lam name bod0
+#16:
+    APP -> do
+      let loc = termLoc term
+      fun0 <- collapseDupsAt state reduceAt book (loc + 0)
+      arg0 <- collapseDupsAt state reduceAt book (loc + 1)
+      return $ App fun0 arg0
+#17:
+    SUP -> do
+      let loc = termLoc term
+      let lab = termLab term
+      case IM.lookup (fromIntegral lab) paths of
+        Just (p:ps) -> do
+          let newPaths = IM.insert (fromIntegral lab) ps paths
+          collapseDupsAt (newPaths) reduceAt book (loc + fromIntegral p)
+        _ -> do
+          tm00 <- collapseDupsAt state reduceAt book (loc + 0)
+          tm11 <- collapseDupsAt state reduceAt book (loc + 1)
+          return $ Sup lab tm00 tm11
+#18:
+    VAR -> do
+      let loc = termLoc term
+      sub <- got loc
+      if termGetBit sub /= 0
+      then do
+        set (loc + 0) (termRemBit sub)
+        collapseDupsAt state reduceAt book (loc + 0)
+      else do
+        name <- return $ "$" ++ show loc
+        return $ Var name
+#19:
+    DP0 -> do
+      let loc = termLoc term
+      let lab = termLab term
+      sb0 <- got (loc+0)
+      if termGetBit sb0 /= 0
+      then do
+        set (loc + 0) (termRemBit sb0)
+        collapseDupsAt state reduceAt book (loc + 0)
+      else do
+        let newPaths = IM.alter (Just . maybe [0] (0:)) (fromIntegral lab) paths
+        collapseDupsAt (newPaths) reduceAt book (loc + 0)
+#20:
+    DP1 -> do
+      let loc = termLoc term
+      let lab = termLab term
+      sb1 <- got (loc+1)
+      if termGetBit sb1 /= 0
+      then do
+        set (loc + 1) (termRemBit sb1)
+        collapseDupsAt state reduceAt book (loc + 1)
+      else do
+        let newPaths = IM.alter (Just . maybe [1] (1:)) (fromIntegral lab) paths
+        collapseDupsAt (newPaths) reduceAt book (loc + 0)
+#21:
+    CTR -> do
+      let loc = termLoc term
+      let lab = termLab term
+      let cid = u12v2X lab
+      let ari = u12v2Y lab
+      let aux = if ari == 0 then [] else [loc + i | i <- [0..ari-1]]
+      fds0 <- forM aux (collapseDupsAt state reduceAt book)
+      return $ Ctr cid fds0
+#22:
+    MAT -> do
+      let loc = termLoc term
+      let len = u12v2X $ termLab term
+      let aux = if len == 0 then [] else [loc + 1 + i | i <- [0..len-1]]
+      val0 <- collapseDupsAt state reduceAt book (loc + 0)
+      css0 <- forM aux $ \h -> do
+        bod <- collapseDupsAt state reduceAt book h
+        return $ ("#", [], bod) -- TODO: recover constructor and fields
+      return $ Mat val0 [] css0
+#23:
+    W32 -> do
+      let val = termLoc term
+      return $ U32 (fromIntegral val)
+#24:
+    CHR -> do
+      let val = termLoc term
+      return $ Chr (chr (fromIntegral val))
+#25:
+    OPX -> do
+      let loc = termLoc term
+      let opr = toEnum (fromIntegral (termLab term))
+      nm00 <- collapseDupsAt state reduceAt book (loc + 0)
+      nm10 <- collapseDupsAt state reduceAt book (loc + 1)
+      return $ Op2 opr nm00 nm10
+#26:
+    OPY -> do
+      let loc = termLoc term
+      let opr = toEnum (fromIntegral (termLab term))
+      nm00 <- collapseDupsAt state reduceAt book (loc + 0)
+      nm10 <- collapseDupsAt state reduceAt book (loc + 1)
+      return $ Op2 opr nm00 nm10
+#27:
+    REF -> do
+      let loc = termLoc term
+      let lab = termLab term
+      let fid = u12v2X lab
+      let ari = u12v2Y lab
+      arg0 <- mapM (collapseDupsAt state reduceAt book) [loc + i | i <- [0..ari-1]]
+      let name = MS.findWithDefault "?" fid (idToName book)
+      return $ Ref name fid arg0
+#28:
+    tag -> do
+      putStrLn ("unexpected-tag:" ++ show tag)
+      return $ Var "?"
+      -- exitFailure
+#29:
+-- Sup Collapser
+-- -------------
+#30:
+collapseSups :: Book -> Core -> Collapse Core
+#31:
+collapseSups book core = case core of
+#32:
+  Var name -> do
+    return $ Var name
+#33:
+  Ref name fid args -> do
+    args <- mapM (collapseSups book) args
+    return $ Ref name fid args
+#34:
+  Lam name body -> do
+    body <- collapseSups book body
+    return $ Lam name body
+#35:
+  App fun arg -> do
+    fun <- collapseSups book fun
+    arg <- collapseSups book arg
+    return $ App fun arg
+#36:
+  Dup lab x y val body -> do
+    val <- collapseSups book val
+    body <- collapseSups book body
+    return $ Dup lab x y val body
+#37:
+  Ctr cid fields -> do
+    fields <- mapM (collapseSups book) fields
+    return $ Ctr cid fields
+#38:
+  Mat val mov css -> do
+    val <- collapseSups book val
+    mov <- mapM (\(key, expr) -> do
+      expr <- collapseSups book expr
+      return (key, expr)) mov
+    css <- mapM (\(ctr, fds, bod) -> do
+      bod <- collapseSups book bod
+      return (ctr, fds, bod)) css
+    return $ Mat val mov css
+#39:
+  U32 val -> do
+    return $ U32 val
+#40:
+  Chr val -> do
+    return $ Chr val
+#41:
+  Op2 op x y -> do
+    x <- collapseSups book x
+    y <- collapseSups book y
+    return $ Op2 op x y
+#42:
+  Let mode name val body -> do
+    val <- collapseSups book val
+    body <- collapseSups book body
+    return $ Let mode name val body
+#43:
+  Era -> do
+    CEra
+#44:
+  Sup lab tm0 tm1 -> do
+    let tm0' = collapseSups book tm0
+    let tm1' = collapseSups book tm1
+    CSup lab tm0' tm1'
+#45:
+-- Tree Collapser
+-- --------------
+#46:
+doCollapseAt :: ReduceAt -> Book -> Loc -> HVM (Collapse Core)
+doCollapseAt reduceAt book host = do
+  -- namesRef <- newIORef MS.empty
+  let state = (IM.empty)
+  core <- collapseDupsAt state reduceAt book host
+  return $ collapseSups book core
+#47:
+-- Priority Queue
+-- --------------
+#48:
+data PQ a
+  = PQLeaf
+  | PQNode (Word64, a) (PQ a) (PQ a)
+  deriving (Show)
+#49:
+pqUnion :: PQ a -> PQ a -> PQ a
+pqUnion PQLeaf heap = heap
+pqUnion heap PQLeaf = heap
+pqUnion heap1@(PQNode (k1,v1) l1 r1) heap2@(PQNode (k2,v2) l2 r2)
+  | k1 <= k2  = PQNode (k1,v1) (pqUnion heap2 r1) l1
+  | otherwise = PQNode (k2,v2) (pqUnion heap1 r2) l2
+#50:
+pqPop :: PQ a -> Maybe ((Word64, a), PQ a)
+pqPop PQLeaf         = Nothing
+pqPop (PQNode x l r) = Just (x, pqUnion l r)
+#51:
+pqPut :: (Word64,a) -> PQ a -> PQ a
+pqPut (k,v) = pqUnion (PQNode (k,v) PQLeaf PQLeaf)
+#52:
+-- Simple Queue
+-- ------------
+-- Allows pushing to an end, and popping from another.
+-- Simple purely functional implementation.
+-- Includes sqPop and sqPut.
+#53:
+data SQ a = SQ [a] [a]
+#54:
+sqPop :: SQ a -> Maybe (a, SQ a)
+sqPop (SQ [] [])     = Nothing
+sqPop (SQ [] ys)     = sqPop (SQ (reverse ys) [])
+sqPop (SQ (x:xs) ys) = Just (x, SQ xs ys)
+#55:
+sqPut :: a -> SQ a -> SQ a
+sqPut x (SQ xs ys) = SQ xs (x:ys)
+#56:
+-- Flattener
+-- ---------
+#57:
+flattenDFS :: Collapse a -> [a]
+flattenDFS (CSup k a b) = flatten a ++ flatten b
+flattenDFS (CVal x)     = [x]
+flattenDFS CEra         = []
+#58:
+flattenBFS :: Collapse a -> [a]
+flattenBFS term = go term (SQ [] [] :: SQ (Collapse a)) where
+  go (CSup k a b) sq = go CEra (sqPut b $ sqPut a $ sq)
+  go (CVal x)     sq = x : go CEra sq
+  go CEra         sq = case sqPop sq of
+    Just (v,sq) -> go v sq
+    Nothing     -> []
+#59:
+flattenPQ :: Collapse a -> [a]
+flattenPQ term = go term (PQLeaf :: PQ (Collapse a)) where
+  go (CSup k a b) pq = go CEra (pqPut (k,a) $ pqPut (k,b) $ pq)
+  go (CVal x)     pq = x : go CEra pq
+  go CEra         pq = case pqPop pq of
+    Just ((k,v),pq) -> go v pq
+    Nothing         -> []
+#60:
+flatten :: Collapse a -> [a]
+flatten = flattenBFS
+#61:
+-- Flat Collapser
+-- --------------
+#62:
+doCollapseFlatAt :: ReduceAt -> Book -> Loc -> HVM [Core]
+doCollapseFlatAt reduceAt book host = do
+  coll <- doCollapseAt reduceAt book host
+  return $ flatten coll
+./Compile.hs
+#63:
+#64:
+module HVML.Compile where
+#65:
+import Control.Monad (forM_, forM, foldM, when)
+import Control.Monad.State
+import Data.List
+import Data.Word
+import Debug.Trace
+import HVML.Show
+import HVML.Type hiding (fresh)
+import qualified Data.Map.Strict as MS
+#66:
+-- Compilation
+-- -----------
+#67:
+data CompileState = CompileState
+  { next :: Word64
+  , tabs :: Int
+  , bins :: MS.Map String String  -- var_name => binder_host
+  , vars :: [(String, String)]    -- [(var_name, var_host)]
+  , code :: [String]
+  }
+#68:
+type Compile = State CompileState
+#69:
+compile :: Book -> Word64 -> String
+compile book fid =
+  let full = compileWith compileFull book fid in
+  let fast = compileWith compileFast book fid in
+  let slow = compileWith compileSlow book fid in
+  if "<ERR>" `isInfixOf` fast
+    then unlines [ full , slow ]
+    else unlines [ full , fast ]
+#70:
+-- Compiles a function using either Fast-Mode or Full-Mode
+compileWith :: (Book -> Word64 -> Core -> Bool -> [(Bool,String)] -> Compile ()) -> Book -> Word64 -> String
+compileWith cmp book fid = 
+  let copy   = fst (fst (mget (idToFunc book) fid)) in
+  let args   = snd (fst (mget (idToFunc book) fid)) in
+  let core   = snd (mget (idToFunc book) fid) in
+  let state  = CompileState 0 0 MS.empty [] [] in
+  let result = runState (cmp book fid core copy args) state in
+  unlines $ reverse $ code (snd result)
+#71:
+emit :: String -> Compile ()
+emit line = modify $ \st -> st { code = (replicate (tabs st * 2) ' ' ++ line) : code st }
+#72:
+tabInc :: Compile ()
+tabInc = modify $ \st -> st { tabs = tabs st + 1 }
+#73:
+tabDec :: Compile ()
+tabDec = modify $ \st -> st { tabs = tabs st - 1 }
+#74:
+bind :: String -> String -> Compile ()
+bind var host = modify $ \st -> st { bins = MS.insert var host (bins st) }
+#75:
+fresh :: String -> Compile String
+fresh name = do
+  uid <- gets next
+  modify $ \s -> s { next = uid + 1 }
+  return $ name ++ show uid
+#76:
+-- Full Compiler
+-- -------------
+#77:
+compileFull :: Book -> Word64 -> Core -> Bool -> [(Bool,String)] -> Compile ()
+compileFull book fid core copy args = do
+  emit $ "Term " ++ mget (idToName book) fid ++ "_t(Term ref) {"
+  tabInc
+  forM_ (zip [0..] args) $ \(i, arg) -> do
+    let argName = snd arg
+    let argTerm = if fst arg
+          then "reduce_at(term_loc(ref) + " ++ show i ++ ")"
+          else "got(term_loc(ref) + " ++ show i ++ ")"
+    bind argName argTerm
+  result <- compileFullCore book fid core "root"
+  st <- get
+  forM_ (vars st) $ \ (var,host) -> do
+    let varTerm = MS.findWithDefault "" var (bins st)
+    emit $ "set(" ++ host ++ ", " ++ varTerm ++ ");"
+  emit $ "return " ++ result ++ ";"
+  tabDec
+  emit "}"
+#78:
+compileFullVar :: String -> String -> Compile String
+compileFullVar var host = do
+  bins <- gets bins
+  case MS.lookup var bins of
+    Just entry -> do
+      return entry
+    Nothing -> do
+      modify $ \s -> s { vars = (var, host) : vars s }
+      return "0"
+#79:
+compileFullCore :: Book -> Word64 -> Core -> String -> Compile String
+#80:
+compileFullCore book fid Era _ = do
+  return $ "term_new(ERA, 0, 0)"
+#81:
+compileFullCore book fid (Var name) host = do
+  compileFullVar name host
+#82:
+compileFullCore book fid (Let mode var val bod) host = do
+  letNam <- fresh "let"
+  emit $ "Loc " ++ letNam ++ " = alloc_node(2);"
+  -- emit $ "set(" ++ letNam ++ " + 0, term_new(SUB, 0, 0));"
+  valT <- compileFullCore book fid val (letNam ++ " + 0")
+  emit $ "set(" ++ letNam ++ " + 0, " ++ valT ++ ");"
+  bind var $ "term_new(VAR, 0, " ++ letNam ++ " + 0)"
+  bodT <- compileFullCore book fid bod (letNam ++ " + 1")
+  emit $ "set(" ++ letNam ++ " + 1, " ++ bodT ++ ");"
+  return $ "term_new(LET, " ++ show (fromEnum mode) ++ ", " ++ letNam ++ ")"
+#83:
+compileFullCore book fid (Lam var bod) host = do
+  lamNam <- fresh "lam"
+  emit $ "Loc " ++ lamNam ++ " = alloc_node(1);"
+  -- emit $ "set(" ++ lamNam ++ " + 0, term_new(SUB, 0, 0));"
+  bind var $ "term_new(VAR, 0, " ++ lamNam ++ " + 0)"
+  bodT <- compileFullCore book fid bod (lamNam ++ " + 0")
+  emit $ "set(" ++ lamNam ++ " + 0, " ++ bodT ++ ");"
+  return $ "term_new(LAM, 0, " ++ lamNam ++ ")"
+#84:
+compileFullCore book fid (App fun arg) host = do
+  appNam <- fresh "app"
+  emit $ "Loc " ++ appNam ++ " = alloc_node(2);"
+  funT <- compileFullCore book fid fun (appNam ++ " + 0")
+  argT <- compileFullCore book fid arg (appNam ++ " + 1")
+  emit $ "set(" ++ appNam ++ " + 0, " ++ funT ++ ");"
+  emit $ "set(" ++ appNam ++ " + 1, " ++ argT ++ ");"
+  return $ "term_new(APP, 0, " ++ appNam ++ ")"
+#85:
+compileFullCore book fid (Sup lab tm0 tm1) host = do
+  supNam <- fresh "sup"
+  emit $ "Loc " ++ supNam ++ " = alloc_node(2);"
+  tm0T <- compileFullCore book fid tm0 (supNam ++ " + 0")
+  tm1T <- compileFullCore book fid tm1 (supNam ++ " + 1")
+  emit $ "set(" ++ supNam ++ " + 0, " ++ tm0T ++ ");"
+  emit $ "set(" ++ supNam ++ " + 1, " ++ tm1T ++ ");"
+  return $ "term_new(SUP, " ++ show lab ++ ", " ++ supNam ++ ")"
+#86:
+compileFullCore book fid (Dup lab dp0 dp1 val bod) host = do
+  dupNam <- fresh "dup"
+  emit $ "Loc " ++ dupNam ++ " = alloc_node(2);"
+  emit $ "set(" ++ dupNam ++ " + 1, term_new(SUB, 0, 0));"
+  bind dp0 $ "term_new(DP0, " ++ show lab ++ ", " ++ dupNam ++ " + 0)"
+  bind dp1 $ "term_new(DP1, " ++ show lab ++ ", " ++ dupNam ++ " + 0)"
+  valT <- compileFullCore book fid val (dupNam ++ " + 0")
+  emit $ "set(" ++ dupNam ++ " + 0, " ++ valT ++ ");"
+  bodT <- compileFullCore book fid bod host
+  return bodT
+#87:
+compileFullCore book fid (Ctr cid fds) host = do
+  ctrNam <- fresh "ctr"

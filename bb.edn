@@ -1,0 +1,9 @@
+{:deps {cheshire/cheshire {:mvn/version "5.13.0"}
+        org.babashka/http-client {:mvn/version "0.3.11"}}
+ :paths ["src" "resources"]
+
+ :tasks
+ {build
+  (shell "clj -T:build uber")
+  }
+ }

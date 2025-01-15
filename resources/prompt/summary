@@ -1,0 +1,52 @@
+Here's a concise summary of the key types and functions in this Haskell codebase implementing HVM (Host Virtual Machine):
+
+Core Types:
+- `Core` - AST for HVM terms (Var, Ref, Era, Lam, App, Sup, Dup, Ctr, Mat, etc.)
+- `Mode` - Evaluation modes (LAZY, STRI, PARA)
+- `Oper` - Binary operators (ADD, SUB, MUL, etc.)  
+- `Book` - Contains function definitions and metadata
+- `Term` - 64-bit runtime term representation
+- `TAG` - Runtime term tags (DP0, DP1, VAR, ERA, etc.)
+
+Key Modules:
+
+Collapse.hs:
+- `Collapse` monad for superposed term reduction
+- `collapseDupsAt`, `collapseSups` - Core collapse functions
+- Priority queue (PQ) and simple queue (SQ) implementations
+
+Compile.hs:
+- `compile`, `compileFull`, `compileFast` - Compile Core to C
+- `CompileState` for compilation context
+
+Extract.hs:
+- `extractCoreAt` - Extract Core terms from runtime representation
+- `liftDups` - Lift Dup terms in Core
+
+Inject.hs:
+- `injectCore` - Convert Core terms to runtime representation 
+- `InjectState` for injection context
+
+Parse.hs:
+- `parseCore`, `parseBook` - Parse Core and Book from text
+- `ParserState` for parser context
+
+Reduce.hs:
+- `reduceAt` - Core term reduction
+- Various reduction rules (APP, LAM, SUP, etc.)
+
+Runtime.c:
+- Term manipulation and reduction in C
+- Memory management and runtime state
+- Primitive operations
+
+Show.hs:
+- Pretty printing for Core terms
+- `showCore`, `coreToString` - Core term display
+
+Type.hs:
+- Core type definitions
+- FFI declarations for C runtime
+- Constants and primitive operations
+
+The codebase implements a virtual machine for evaluating lambda terms with explicit sharing through duplicator nodes (Dup) and superposition (Sup).
