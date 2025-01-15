@@ -41,7 +41,7 @@ java -jar dist/chunk-analyser-0.0.1-standalone.jar "Fix todos"
 bb -x bennischwerdtner.refactor.analyser/say-relevant-refactor-chunks --request "Fix todos"
 ```
 
-# Concepts
+# Implementation - Concepts
 
 - This uses *Anthropic public api*, asking a *model8 to output *regex patterns*.
 
