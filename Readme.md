@@ -73,3 +73,9 @@ tldr: 0.02-0.03 USD per code refactor request
 - Claude 3.5 Sonnet 2024-10-22; Million Input Tokens 3 USD; Million Output tokens 15 USD
 
 Comes to something in the range of 0.02-0.03 USD per code refactor request.
+
+# Limitations
+
+- The inital prompt probably does not contain enough info for specific code base refactor tasks,
+- You could try put in better info for example with something like treesitter data dump from https://github.com/bjsi/hvm3-refactor-bounty
+
