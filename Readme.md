@@ -54,6 +54,11 @@ bb -x bennischwerdtner.refactor.analyser/say-relevant-refactor-chunks --request 
 
 - `bb build`, which see
 
+- requires clojure tools to be installed.
+  The aur package is `clojure`.
+  ([Official install guide](https://clojure.org/guides/install_clojure))
+
+
 # Time
 
 Seems to be 5-10s.
